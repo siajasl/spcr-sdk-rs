@@ -6,6 +6,7 @@
 //! added as the SDK grows.
 
 pub mod digests;
+pub mod sigs;
 
 /// Returns the name of this crate.
 ///

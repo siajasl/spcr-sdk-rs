@@ -41,8 +41,7 @@ pub fn get_hash_blake2b_of_length(data: &[u8], length: usize) -> Vec<u8> {
         (1..=64).contains(&length),
         "BLAKE2b output length must be between 1 and 64 bytes inclusive, got {length}"
     );
-    let mut hasher =
-        Blake2bVar::new(length).expect("length already validated to be within 1..=64");
+    let mut hasher = Blake2bVar::new(length).expect("length already validated to be within 1..=64");
     hasher.update(data);
     hasher.finalize_boxed().into_vec()
 }
