@@ -5,6 +5,8 @@
 //! This crate is intentionally minimal to begin with; functionality will be
 //! added as the SDK grows.
 
+pub mod digests;
+
 /// Returns the name of this crate.
 ///
 /// Placeholder used to verify the crate is wired into the workspace correctly.

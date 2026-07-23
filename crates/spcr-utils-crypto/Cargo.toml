@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+blake2 = "0.10"
 
 [lints.rust]
 unsafe_code = "forbid"
