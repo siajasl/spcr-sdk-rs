@@ -165,11 +165,11 @@ pub fn get_key_pair_from_pem_secp256k1(
 /// # Examples
 ///
 /// ```
-/// # use spcr_utils_crypto::sigs::verify_signature_secp256k1_over_prehash;
+/// # use spcr_utils_crypto::sigs::verify_signature_over_prehash_secp256k1;
 /// // An all-zero key/signature does not verify an arbitrary digest.
-/// assert!(!verify_signature_secp256k1_over_prehash(&[0u8; 64], &[0u8; 33], &[0u8; 32]));
+/// assert!(!verify_signature_over_prehash_secp256k1(&[0u8; 64], &[0u8; 33], &[0u8; 32]));
 /// ```
-pub fn verify_signature_secp256k1_over_prehash(
+pub fn verify_signature_over_prehash_secp256k1(
     sig: &[u8; SECP256K1_SIGNATURE_LENGTH],
     vkey: &[u8; SECP256K1_VERIFYING_KEY_LENGTH],
     msg: &[u8; SECP256K1_DIGEST_LENGTH],
@@ -217,7 +217,7 @@ mod tests {
         let key = signing_key();
         let digest = [3u8; SECP256K1_DIGEST_LENGTH];
         let sig = sign(&key, &digest);
-        assert!(verify_signature_secp256k1_over_prehash(
+        assert!(verify_signature_over_prehash_secp256k1(
             &sig,
             &vkey_bytes(&key),
             &digest
@@ -228,7 +228,7 @@ mod tests {
     fn rejects_signature_over_wrong_digest() {
         let key = signing_key();
         let sig = sign(&key, &[3u8; SECP256K1_DIGEST_LENGTH]);
-        assert!(!verify_signature_secp256k1_over_prehash(
+        assert!(!verify_signature_over_prehash_secp256k1(
             &sig,
             &vkey_bytes(&key),
             &[4u8; SECP256K1_DIGEST_LENGTH],
@@ -241,7 +241,7 @@ mod tests {
         let other = SigningKey::from_slice(&[9u8; 32]).unwrap();
         let digest = [3u8; SECP256K1_DIGEST_LENGTH];
         let sig = sign(&key, &digest);
-        assert!(!verify_signature_secp256k1_over_prehash(
+        assert!(!verify_signature_over_prehash_secp256k1(
             &sig,
             &vkey_bytes(&other),
             &digest,
@@ -254,7 +254,7 @@ mod tests {
         let key = signing_key();
         let digest = [3u8; SECP256K1_DIGEST_LENGTH];
         let sig = sign(&key, &digest);
-        assert!(!verify_signature_secp256k1_over_prehash(
+        assert!(!verify_signature_over_prehash_secp256k1(
             &sig,
             &[0u8; SECP256K1_VERIFYING_KEY_LENGTH],
             &digest,
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn rejects_all_zero_inputs() {
-        assert!(!verify_signature_secp256k1_over_prehash(
+        assert!(!verify_signature_over_prehash_secp256k1(
             &[0u8; 64], &[0u8; 33], &[0u8; 32],
         ));
     }
@@ -293,7 +293,7 @@ mod tests {
         let key = SigningKey::from_slice(&signing_key).expect("generated scalar is valid");
         let digest = [3u8; SECP256K1_DIGEST_LENGTH];
         let sig = sign(&key, &digest);
-        assert!(verify_signature_secp256k1_over_prehash(
+        assert!(verify_signature_over_prehash_secp256k1(
             &sig,
             &verifying_key,
             &digest,
