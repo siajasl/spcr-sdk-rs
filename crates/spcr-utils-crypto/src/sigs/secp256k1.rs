@@ -1,8 +1,12 @@
 //! secp256k1 ECDSA signature verification.
 
+use std::path::Path;
+
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use k256::pkcs8::DecodePrivateKey;
 use rand_core::OsRng;
+use sec1::DecodeEcPrivateKey;
 
 /// Length, in bytes, of a secp256k1 ECDSA signature (compact `r || s`).
 pub const SECP256K1_SIGNATURE_LENGTH: usize = 64;
@@ -62,6 +66,89 @@ pub fn new_key_pair_secp256k1(
         .try_into()
         .expect("compressed key is 33 bytes");
     (signing_key_bytes, verifying_key_bytes)
+}
+
+/// An error returned by [`get_key_pair_from_pem_secp256k1`].
+#[derive(Debug)]
+pub enum Secp256k1PemError {
+    /// The PEM file could not be read from disk.
+    Io(std::io::Error),
+    /// The file contents could not be parsed as a supported PEM-encoded
+    /// secp256k1 private key (PKCS#8 or SEC1).
+    Parse,
+}
+
+impl std::fmt::Display for Secp256k1PemError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "failed to read PEM file: {err}"),
+            Self::Parse => f.write_str(
+                "file is not a valid PEM-encoded secp256k1 private key (expected PKCS#8 or SEC1)",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Secp256k1PemError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::Parse => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for Secp256k1PemError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+/// Loads a secp256k1 key pair from a PEM file at `path`, returning
+/// `(signing_key, verifying_key)` as raw bytes.
+///
+/// The file must contain a PEM-encoded secp256k1 private key in either PKCS#8
+/// (`-----BEGIN PRIVATE KEY-----`) or SEC1 (`-----BEGIN EC PRIVATE KEY-----`)
+/// form. The public key is derived from the private scalar.
+///
+/// The first element of the returned tuple is the 32-byte signing (private) key
+/// scalar; the second is the corresponding 33-byte compressed (SEC1)
+/// verification (public) key.
+///
+/// # Errors
+///
+/// Returns [`Secp256k1PemError::Io`] if the file cannot be read, or
+/// [`Secp256k1PemError::Parse`] if its contents are not a valid PEM-encoded
+/// secp256k1 private key.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use spcr_utils_crypto::sigs::get_key_pair_from_pem_secp256k1;
+/// let (private_key, public_key) = get_key_pair_from_pem_secp256k1("key.pem")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn get_key_pair_from_pem_secp256k1(
+    path: impl AsRef<Path>,
+) -> Result<
+    (
+        [u8; SECP256K1_SIGNING_KEY_LENGTH],
+        [u8; SECP256K1_VERIFYING_KEY_LENGTH],
+    ),
+    Secp256k1PemError,
+> {
+    let pem = std::fs::read_to_string(path)?;
+    let signing_key = SigningKey::from_pkcs8_pem(&pem)
+        .or_else(|_| SigningKey::from_sec1_pem(&pem))
+        .map_err(|_| Secp256k1PemError::Parse)?;
+    let signing_key_bytes: [u8; SECP256K1_SIGNING_KEY_LENGTH] = signing_key.to_bytes().into();
+    let verifying_key_bytes: [u8; SECP256K1_VERIFYING_KEY_LENGTH] = signing_key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .expect("compressed key is 33 bytes");
+    Ok((signing_key_bytes, verifying_key_bytes))
 }
 
 /// Verifies a secp256k1 ECDSA `sig` over the pre-hashed message digest `msg`
@@ -223,5 +310,67 @@ mod tests {
     fn new_key_pair_panics_on_invalid_seed() {
         // An all-zero scalar is not a valid secp256k1 private key.
         let _ = new_key_pair_secp256k1(Some(&[0u8; SECP256K1_SIGNING_KEY_LENGTH]));
+    }
+
+    /// A unique temp-file path for a PEM fixture, scoped to this process and a
+    /// per-call counter so parallel tests never collide.
+    fn temp_pem_path(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "spcr_secp256k1_{}_{}_{}.pem",
+            tag,
+            std::process::id(),
+            n
+        ))
+    }
+
+    #[test]
+    fn loads_pkcs8_pem_key_pair() {
+        use k256::pkcs8::{EncodePrivateKey, LineEnding};
+        let key = signing_key();
+        let pem = key.to_pkcs8_pem(LineEnding::LF).expect("encode PKCS#8 PEM");
+        let path = temp_pem_path("pkcs8");
+        std::fs::write(&path, pem.as_bytes()).expect("write PEM fixture");
+
+        let (private_key, public_key) =
+            get_key_pair_from_pem_secp256k1(&path).expect("load PKCS#8 key pair");
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(private_key, [7u8; SECP256K1_SIGNING_KEY_LENGTH]);
+        assert_eq!(public_key, vkey_bytes(&key));
+    }
+
+    #[test]
+    fn loads_sec1_pem_key_pair() {
+        use sec1::{der::pem::LineEnding, EncodeEcPrivateKey};
+        let key = signing_key();
+        let pem = key.to_sec1_pem(LineEnding::LF).expect("encode SEC1 PEM");
+        let path = temp_pem_path("sec1");
+        std::fs::write(&path, pem.as_bytes()).expect("write PEM fixture");
+
+        let (private_key, public_key) =
+            get_key_pair_from_pem_secp256k1(&path).expect("load SEC1 key pair");
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(private_key, [7u8; SECP256K1_SIGNING_KEY_LENGTH]);
+        assert_eq!(public_key, vkey_bytes(&key));
+    }
+
+    #[test]
+    fn errors_on_missing_file() {
+        let path = temp_pem_path("missing");
+        let err = get_key_pair_from_pem_secp256k1(&path).expect_err("missing file must error");
+        assert!(matches!(err, Secp256k1PemError::Io(_)));
+    }
+
+    #[test]
+    fn errors_on_invalid_pem() {
+        let path = temp_pem_path("garbage");
+        std::fs::write(&path, b"not a pem file").expect("write garbage fixture");
+        let err = get_key_pair_from_pem_secp256k1(&path).expect_err("garbage must error");
+        std::fs::remove_file(&path).ok();
+        assert!(matches!(err, Secp256k1PemError::Parse));
     }
 }
