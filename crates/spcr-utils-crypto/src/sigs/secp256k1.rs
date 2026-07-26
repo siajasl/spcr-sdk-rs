@@ -68,6 +68,73 @@ pub fn new_key_pair_secp256k1(
     (signing_key_bytes, verifying_key_bytes)
 }
 
+/// An error returned by [`get_key_pair_from_bytes_secp256k1`].
+#[derive(Debug)]
+pub enum Secp256k1KeyBytesError {
+    /// The bytes do not encode a valid secp256k1 private key scalar (i.e. the
+    /// scalar is zero or greater than or equal to the curve order).
+    InvalidScalar,
+}
+
+impl std::fmt::Display for Secp256k1KeyBytesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidScalar => f.write_str(
+                "bytes do not encode a valid secp256k1 private key scalar \
+                 (must be non-zero and less than the curve order)",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Secp256k1KeyBytesError {}
+
+/// Derives a secp256k1 key pair from a raw private key, returning
+/// `(signing_key, verifying_key)` as raw bytes.
+///
+/// `private_key` is a 32-byte big-endian private key scalar. The returned
+/// signing key equals `private_key`, and the 33-byte compressed (SEC1)
+/// verification (public) key is derived from it.
+///
+/// Unlike [`new_key_pair_secp256k1`], which panics on an invalid seed, this
+/// function reports an invalid scalar via its return type.
+///
+/// # Errors
+///
+/// Returns [`Secp256k1KeyBytesError::InvalidScalar`] if `private_key` is not a
+/// valid secp256k1 scalar (i.e. it is zero or greater than or equal to the
+/// curve order).
+///
+/// # Examples
+///
+/// ```
+/// # use spcr_utils_crypto::sigs::get_key_pair_from_bytes_secp256k1;
+/// let private_key = [7u8; 32];
+/// let (signing_key, verifying_key) = get_key_pair_from_bytes_secp256k1(&private_key)?;
+/// assert_eq!(signing_key, private_key);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn get_key_pair_from_bytes_secp256k1(
+    private_key: &[u8; SECP256K1_SIGNING_KEY_LENGTH],
+) -> Result<
+    (
+        [u8; SECP256K1_SIGNING_KEY_LENGTH],
+        [u8; SECP256K1_VERIFYING_KEY_LENGTH],
+    ),
+    Secp256k1KeyBytesError,
+> {
+    let signing_key =
+        SigningKey::from_slice(private_key).map_err(|_| Secp256k1KeyBytesError::InvalidScalar)?;
+    let signing_key_bytes: [u8; SECP256K1_SIGNING_KEY_LENGTH] = signing_key.to_bytes().into();
+    let verifying_key_bytes: [u8; SECP256K1_VERIFYING_KEY_LENGTH] = signing_key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .expect("compressed key is 33 bytes");
+    Ok((signing_key_bytes, verifying_key_bytes))
+}
+
 /// An error returned by [`get_key_pair_from_pem_secp256k1`].
 #[derive(Debug)]
 pub enum Secp256k1PemError {
@@ -310,6 +377,47 @@ mod tests {
     fn new_key_pair_panics_on_invalid_seed() {
         // An all-zero scalar is not a valid secp256k1 private key.
         let _ = new_key_pair_secp256k1(Some(&[0u8; SECP256K1_SIGNING_KEY_LENGTH]));
+    }
+
+    #[test]
+    fn from_bytes_returns_private_key_and_derived_public() {
+        let private_key = [7u8; SECP256K1_SIGNING_KEY_LENGTH];
+        let (signing_key_bytes, public_key) =
+            get_key_pair_from_bytes_secp256k1(&private_key).expect("valid scalar");
+        assert_eq!(signing_key_bytes, private_key);
+        assert_eq!(public_key, vkey_bytes(&signing_key()));
+    }
+
+    #[test]
+    fn from_bytes_matches_new_key_pair_with_seed() {
+        let private_key = [7u8; SECP256K1_SIGNING_KEY_LENGTH];
+        assert_eq!(
+            get_key_pair_from_bytes_secp256k1(&private_key).expect("valid scalar"),
+            new_key_pair_secp256k1(Some(&private_key))
+        );
+    }
+
+    #[test]
+    fn from_bytes_produces_verifiable_signatures() {
+        let private_key = [7u8; SECP256K1_SIGNING_KEY_LENGTH];
+        let (signing_key_bytes, public_key) =
+            get_key_pair_from_bytes_secp256k1(&private_key).expect("valid scalar");
+        let key = SigningKey::from_slice(&signing_key_bytes).expect("valid scalar");
+        let digest = [3u8; SECP256K1_DIGEST_LENGTH];
+        let sig = sign(&key, &digest);
+        assert!(verify_signature_over_prehash_secp256k1(
+            &sig,
+            &public_key,
+            &digest,
+        ));
+    }
+
+    #[test]
+    fn from_bytes_rejects_invalid_scalar() {
+        // An all-zero scalar is not a valid secp256k1 private key.
+        let err = get_key_pair_from_bytes_secp256k1(&[0u8; SECP256K1_SIGNING_KEY_LENGTH])
+            .expect_err("all-zero scalar must error");
+        assert!(matches!(err, Secp256k1KeyBytesError::InvalidScalar));
     }
 
     /// A unique temp-file path for a PEM fixture, scoped to this process and a
