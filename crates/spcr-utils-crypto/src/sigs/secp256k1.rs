@@ -1,10 +1,14 @@
 //! secp256k1 ECDSA signature verification.
 
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
-use k256::ecdsa::{Signature, VerifyingKey};
+use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use rand_core::OsRng;
 
 /// Length, in bytes, of a secp256k1 ECDSA signature (compact `r || s`).
 pub const SECP256K1_SIGNATURE_LENGTH: usize = 64;
+
+/// Length, in bytes, of a secp256k1 signing (private) key scalar.
+pub const SECP256K1_SIGNING_KEY_LENGTH: usize = 32;
 
 /// Length, in bytes, of a compressed (SEC1) secp256k1 verification key.
 pub const SECP256K1_VERIFYING_KEY_LENGTH: usize = 33;
@@ -12,6 +16,53 @@ pub const SECP256K1_VERIFYING_KEY_LENGTH: usize = 33;
 /// Length, in bytes, of the pre-hashed message digest verified against a
 /// secp256k1 signature.
 pub const SECP256K1_DIGEST_LENGTH: usize = 32;
+
+/// Generates a new secp256k1 key pair, returning `(signing_key, verifying_key)`
+/// as raw bytes.
+///
+/// If `seed` is `Some`, it is interpreted as the 32-byte big-endian private key
+/// scalar and the pair is derived deterministically; the returned signing key
+/// equals the seed. If `seed` is `None`, a fresh key is drawn from the operating
+/// system's cryptographically secure random number generator ([`OsRng`]).
+///
+/// The first element of the returned tuple is the 32-byte signing (private) key
+/// scalar; the second is the corresponding 33-byte compressed (SEC1)
+/// verification (public) key.
+///
+/// # Panics
+///
+/// Panics if `seed` is `Some` but does not encode a valid secp256k1 scalar
+/// (i.e. it is zero or greater than or equal to the curve order).
+///
+/// # Examples
+///
+/// ```
+/// # use spcr_utils_crypto::sigs::new_key_pair_secp256k1;
+/// // Deriving from a fixed, valid scalar is deterministic.
+/// let seed = [7u8; 32];
+/// let (signing_key, verifying_key) = new_key_pair_secp256k1(Some(&seed));
+/// assert_eq!(signing_key, seed);
+/// assert_eq!(new_key_pair_secp256k1(Some(&seed)), (signing_key, verifying_key));
+/// ```
+pub fn new_key_pair_secp256k1(
+    seed: Option<&[u8; SECP256K1_SIGNING_KEY_LENGTH]>,
+) -> (
+    [u8; SECP256K1_SIGNING_KEY_LENGTH],
+    [u8; SECP256K1_VERIFYING_KEY_LENGTH],
+) {
+    let signing_key = match seed {
+        Some(seed) => SigningKey::from_slice(seed).expect("seed is a valid secp256k1 scalar"),
+        None => SigningKey::random(&mut OsRng),
+    };
+    let signing_key_bytes: [u8; SECP256K1_SIGNING_KEY_LENGTH] = signing_key.to_bytes().into();
+    let verifying_key_bytes: [u8; SECP256K1_VERIFYING_KEY_LENGTH] = signing_key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .expect("compressed key is 33 bytes");
+    (signing_key_bytes, verifying_key_bytes)
+}
 
 /// Verifies a secp256k1 ECDSA `sig` over the pre-hashed message digest `msg`
 /// for the given verification key `vkey`.
@@ -128,5 +179,49 @@ mod tests {
         assert!(!verify_signature_secp256k1_over_prehash(
             &[0u8; 64], &[0u8; 33], &[0u8; 32],
         ));
+    }
+
+    #[test]
+    fn new_key_pair_from_seed_is_deterministic() {
+        let seed = [7u8; SECP256K1_SIGNING_KEY_LENGTH];
+        assert_eq!(
+            new_key_pair_secp256k1(Some(&seed)),
+            new_key_pair_secp256k1(Some(&seed))
+        );
+    }
+
+    #[test]
+    fn new_key_pair_returns_seed_as_signing_key() {
+        let seed = [7u8; SECP256K1_SIGNING_KEY_LENGTH];
+        let (private_key, public_key) = new_key_pair_secp256k1(Some(&seed));
+        assert_eq!(private_key, seed);
+        // The verifying key matches the compressed key k256 derives from the seed.
+        let expected = SigningKey::from_slice(&seed).expect("valid scalar");
+        assert_eq!(public_key, vkey_bytes(&expected));
+    }
+
+    #[test]
+    fn new_key_pair_produces_verifiable_signatures() {
+        let (signing_key, verifying_key) = new_key_pair_secp256k1(None);
+        let key = SigningKey::from_slice(&signing_key).expect("generated scalar is valid");
+        let digest = [3u8; SECP256K1_DIGEST_LENGTH];
+        let sig = sign(&key, &digest);
+        assert!(verify_signature_secp256k1_over_prehash(
+            &sig,
+            &verifying_key,
+            &digest,
+        ));
+    }
+
+    #[test]
+    fn new_random_key_pairs_differ() {
+        assert_ne!(new_key_pair_secp256k1(None), new_key_pair_secp256k1(None));
+    }
+
+    #[test]
+    #[should_panic]
+    fn new_key_pair_panics_on_invalid_seed() {
+        // An all-zero scalar is not a valid secp256k1 private key.
+        let _ = new_key_pair_secp256k1(Some(&[0u8; SECP256K1_SIGNING_KEY_LENGTH]));
     }
 }
