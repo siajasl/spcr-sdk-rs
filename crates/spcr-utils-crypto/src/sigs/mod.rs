@@ -14,7 +14,6 @@ pub use ed25519::{
 };
 pub use secp256k1::{
     get_key_pair_from_bytes_secp256k1, get_key_pair_from_pem_secp256k1, new_key_pair_secp256k1,
-    verify_signature_over_prehash_secp256k1, Secp256k1KeyBytesError, Secp256k1PemError,
-    SECP256K1_DIGEST_LENGTH, SECP256K1_SIGNATURE_LENGTH, SECP256K1_SIGNING_KEY_LENGTH,
-    SECP256K1_VERIFYING_KEY_LENGTH,
+    verify_signature_over_prehash_secp256k1, Secp256k1Error, SECP256K1_DIGEST_LENGTH,
+    SECP256K1_SIGNATURE_LENGTH, SECP256K1_SIGNING_KEY_LENGTH, SECP256K1_VERIFYING_KEY_LENGTH,
 };

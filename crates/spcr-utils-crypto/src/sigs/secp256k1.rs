@@ -68,26 +68,49 @@ pub fn new_key_pair_secp256k1(
     (signing_key_bytes, verifying_key_bytes)
 }
 
-/// An error returned by [`get_key_pair_from_bytes_secp256k1`].
+/// An error returned when constructing a secp256k1 key pair, by
+/// [`get_key_pair_from_bytes_secp256k1`] and [`get_key_pair_from_pem_secp256k1`].
 #[derive(Debug)]
-pub enum Secp256k1KeyBytesError {
+pub enum Secp256k1Error {
     /// The bytes do not encode a valid secp256k1 private key scalar (i.e. the
     /// scalar is zero or greater than or equal to the curve order).
     InvalidScalar,
+    /// A PEM file could not be read from disk.
+    Io(std::io::Error),
+    /// PEM contents could not be parsed as a supported secp256k1 private key
+    /// (PKCS#8 or SEC1).
+    Parse,
 }
 
-impl std::fmt::Display for Secp256k1KeyBytesError {
+impl std::fmt::Display for Secp256k1Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidScalar => f.write_str(
                 "bytes do not encode a valid secp256k1 private key scalar \
                  (must be non-zero and less than the curve order)",
             ),
+            Self::Io(err) => write!(f, "failed to read PEM file: {err}"),
+            Self::Parse => f.write_str(
+                "file is not a valid PEM-encoded secp256k1 private key (expected PKCS#8 or SEC1)",
+            ),
         }
     }
 }
 
-impl std::error::Error for Secp256k1KeyBytesError {}
+impl std::error::Error for Secp256k1Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::InvalidScalar | Self::Parse => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for Secp256k1Error {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
 
 /// Derives a secp256k1 key pair from a raw private key, returning
 /// `(signing_key, verifying_key)` as raw bytes.
@@ -101,9 +124,9 @@ impl std::error::Error for Secp256k1KeyBytesError {}
 ///
 /// # Errors
 ///
-/// Returns [`Secp256k1KeyBytesError::InvalidScalar`] if `private_key` is not a
-/// valid secp256k1 scalar (i.e. it is zero or greater than or equal to the
-/// curve order).
+/// Returns [`Secp256k1Error::InvalidScalar`] if `private_key` is not a valid
+/// secp256k1 scalar (i.e. it is zero or greater than or equal to the curve
+/// order).
 ///
 /// # Examples
 ///
@@ -121,10 +144,10 @@ pub fn get_key_pair_from_bytes_secp256k1(
         [u8; SECP256K1_SIGNING_KEY_LENGTH],
         [u8; SECP256K1_VERIFYING_KEY_LENGTH],
     ),
-    Secp256k1KeyBytesError,
+    Secp256k1Error,
 > {
     let signing_key =
-        SigningKey::from_slice(private_key).map_err(|_| Secp256k1KeyBytesError::InvalidScalar)?;
+        SigningKey::from_slice(private_key).map_err(|_| Secp256k1Error::InvalidScalar)?;
     let signing_key_bytes: [u8; SECP256K1_SIGNING_KEY_LENGTH] = signing_key.to_bytes().into();
     let verifying_key_bytes: [u8; SECP256K1_VERIFYING_KEY_LENGTH] = signing_key
         .verifying_key()
@@ -133,42 +156,6 @@ pub fn get_key_pair_from_bytes_secp256k1(
         .try_into()
         .expect("compressed key is 33 bytes");
     Ok((signing_key_bytes, verifying_key_bytes))
-}
-
-/// An error returned by [`get_key_pair_from_pem_secp256k1`].
-#[derive(Debug)]
-pub enum Secp256k1PemError {
-    /// The PEM file could not be read from disk.
-    Io(std::io::Error),
-    /// The file contents could not be parsed as a supported PEM-encoded
-    /// secp256k1 private key (PKCS#8 or SEC1).
-    Parse,
-}
-
-impl std::fmt::Display for Secp256k1PemError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(err) => write!(f, "failed to read PEM file: {err}"),
-            Self::Parse => f.write_str(
-                "file is not a valid PEM-encoded secp256k1 private key (expected PKCS#8 or SEC1)",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for Secp256k1PemError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(err) => Some(err),
-            Self::Parse => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for Secp256k1PemError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
-    }
 }
 
 /// Loads a secp256k1 key pair from a PEM file at `path`, returning
@@ -184,8 +171,8 @@ impl From<std::io::Error> for Secp256k1PemError {
 ///
 /// # Errors
 ///
-/// Returns [`Secp256k1PemError::Io`] if the file cannot be read, or
-/// [`Secp256k1PemError::Parse`] if its contents are not a valid PEM-encoded
+/// Returns [`Secp256k1Error::Io`] if the file cannot be read, or
+/// [`Secp256k1Error::Parse`] if its contents are not a valid PEM-encoded
 /// secp256k1 private key.
 ///
 /// # Examples
@@ -202,12 +189,12 @@ pub fn get_key_pair_from_pem_secp256k1(
         [u8; SECP256K1_SIGNING_KEY_LENGTH],
         [u8; SECP256K1_VERIFYING_KEY_LENGTH],
     ),
-    Secp256k1PemError,
+    Secp256k1Error,
 > {
     let pem = std::fs::read_to_string(path)?;
     let signing_key = SigningKey::from_pkcs8_pem(&pem)
         .or_else(|_| SigningKey::from_sec1_pem(&pem))
-        .map_err(|_| Secp256k1PemError::Parse)?;
+        .map_err(|_| Secp256k1Error::Parse)?;
     let signing_key_bytes: [u8; SECP256K1_SIGNING_KEY_LENGTH] = signing_key.to_bytes().into();
     let verifying_key_bytes: [u8; SECP256K1_VERIFYING_KEY_LENGTH] = signing_key
         .verifying_key()
@@ -417,7 +404,7 @@ mod tests {
         // An all-zero scalar is not a valid secp256k1 private key.
         let err = get_key_pair_from_bytes_secp256k1(&[0u8; SECP256K1_SIGNING_KEY_LENGTH])
             .expect_err("all-zero scalar must error");
-        assert!(matches!(err, Secp256k1KeyBytesError::InvalidScalar));
+        assert!(matches!(err, Secp256k1Error::InvalidScalar));
     }
 
     /// A unique temp-file path for a PEM fixture, scoped to this process and a
@@ -470,7 +457,7 @@ mod tests {
     fn errors_on_missing_file() {
         let path = temp_pem_path("missing");
         let err = get_key_pair_from_pem_secp256k1(&path).expect_err("missing file must error");
-        assert!(matches!(err, Secp256k1PemError::Io(_)));
+        assert!(matches!(err, Secp256k1Error::Io(_)));
     }
 
     #[test]
@@ -479,6 +466,6 @@ mod tests {
         std::fs::write(&path, b"not a pem file").expect("write garbage fixture");
         let err = get_key_pair_from_pem_secp256k1(&path).expect_err("garbage must error");
         std::fs::remove_file(&path).ok();
-        assert!(matches!(err, Secp256k1PemError::Parse));
+        assert!(matches!(err, Secp256k1Error::Parse));
     }
 }
