@@ -9,6 +9,10 @@ rust-version.workspace = true
 
 [dependencies]
 blake2 = "0.10"
+ed25519-dalek = { version = "2", features = ["pem", "rand_core"] }
+k256 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+sec1 = { version = "0.7", features = ["pem"] }
 
 [lints.rust]
 unsafe_code = "forbid"
