@@ -151,11 +151,11 @@ pub fn get_key_pair_from_pem_ed25519(
 /// # Examples
 ///
 /// ```
-/// # use spcr_utils_crypto::sigs::verify_signature_ed25519_over_prehash;
+/// # use spcr_utils_crypto::sigs::verify_signature_over_prehash_ed25519;
 /// // An all-zero key/signature does not verify an arbitrary digest.
-/// assert!(!verify_signature_ed25519_over_prehash(&[0u8; 64], &[0u8; 32], &[0u8; 32]));
+/// assert!(!verify_signature_over_prehash_ed25519(&[0u8; 64], &[0u8; 32], &[0u8; 32]));
 /// ```
-pub fn verify_signature_ed25519_over_prehash(
+pub fn verify_signature_over_prehash_ed25519(
     sig: &[u8; ED25519_SIGNATURE_LENGTH],
     vkey: &[u8; ED25519_VERIFYING_KEY_LENGTH],
     msg: &[u8; ED25519_DIGEST_LENGTH],
@@ -184,7 +184,7 @@ mod tests {
         let key = signing_key();
         let digest = [3u8; ED25519_DIGEST_LENGTH];
         let sig = key.sign(&digest);
-        assert!(verify_signature_ed25519_over_prehash(
+        assert!(verify_signature_over_prehash_ed25519(
             &sig.to_bytes(),
             &key.verifying_key().to_bytes(),
             &digest,
@@ -195,7 +195,7 @@ mod tests {
     fn rejects_signature_over_wrong_digest() {
         let key = signing_key();
         let sig = key.sign(&[3u8; ED25519_DIGEST_LENGTH]);
-        assert!(!verify_signature_ed25519_over_prehash(
+        assert!(!verify_signature_over_prehash_ed25519(
             &sig.to_bytes(),
             &key.verifying_key().to_bytes(),
             &[4u8; ED25519_DIGEST_LENGTH],
@@ -208,7 +208,7 @@ mod tests {
         let other = SigningKey::from_bytes(&[9u8; 32]);
         let digest = [3u8; ED25519_DIGEST_LENGTH];
         let sig = key.sign(&digest);
-        assert!(!verify_signature_ed25519_over_prehash(
+        assert!(!verify_signature_over_prehash_ed25519(
             &sig.to_bytes(),
             &other.verifying_key().to_bytes(),
             &digest,
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn rejects_all_zero_inputs() {
-        assert!(!verify_signature_ed25519_over_prehash(
+        assert!(!verify_signature_over_prehash_ed25519(
             &[0u8; 64],
             &[0u8; 32],
             &[0u8; 32],
@@ -245,7 +245,7 @@ mod tests {
         let (signing_key, verifying_key) = new_key_pair_ed25519(None);
         let digest = [3u8; ED25519_DIGEST_LENGTH];
         let sig = SigningKey::from_bytes(&signing_key).sign(&digest);
-        assert!(verify_signature_ed25519_over_prehash(
+        assert!(verify_signature_over_prehash_ed25519(
             &sig.to_bytes(),
             &verifying_key,
             &digest,
