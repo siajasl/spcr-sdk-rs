@@ -56,6 +56,39 @@ pub fn new_key_pair_ed25519(
     )
 }
 
+/// Derives an Ed25519 key pair from a raw private key, returning
+/// `(signing_key, verifying_key)` as raw bytes.
+///
+/// `private_key` is the 32-byte Ed25519 signing key seed. Every 32-byte value
+/// is a valid seed, so this function is infallible. The returned signing key
+/// equals `private_key`, and the verification (public) key is derived from it.
+///
+/// This is equivalent to [`new_key_pair_ed25519(Some(private_key))`], provided
+/// as a named member of the `get_key_pair_from_*` family.
+///
+/// # Examples
+///
+/// ```
+/// # use spcr_utils_crypto::sigs::get_key_pair_from_bytes_ed25519;
+/// let private_key = [7u8; 32];
+/// let (signing_key, verifying_key) = get_key_pair_from_bytes_ed25519(&private_key);
+/// assert_eq!(signing_key, private_key);
+/// ```
+///
+/// [`new_key_pair_ed25519(Some(private_key))`]: new_key_pair_ed25519
+pub fn get_key_pair_from_bytes_ed25519(
+    private_key: &[u8; ED25519_SIGNING_KEY_LENGTH],
+) -> (
+    [u8; ED25519_SIGNING_KEY_LENGTH],
+    [u8; ED25519_VERIFYING_KEY_LENGTH],
+) {
+    let signing_key = SigningKey::from_bytes(private_key);
+    (
+        signing_key.to_bytes(),
+        signing_key.verifying_key().to_bytes(),
+    )
+}
+
 /// An error returned by [`get_key_pair_from_pem_ed25519`].
 #[derive(Debug)]
 pub enum Ed25519PemError {
@@ -255,6 +288,37 @@ mod tests {
     #[test]
     fn new_random_key_pairs_differ() {
         assert_ne!(new_key_pair_ed25519(None), new_key_pair_ed25519(None));
+    }
+
+    #[test]
+    fn from_bytes_returns_private_key_and_derived_public() {
+        let private_key = [7u8; ED25519_SIGNING_KEY_LENGTH];
+        let (signing_key, verifying_key) = get_key_pair_from_bytes_ed25519(&private_key);
+        assert_eq!(signing_key, private_key);
+        let expected = SigningKey::from_bytes(&private_key).verifying_key().to_bytes();
+        assert_eq!(verifying_key, expected);
+    }
+
+    #[test]
+    fn from_bytes_matches_new_key_pair_with_seed() {
+        let private_key = [42u8; ED25519_SIGNING_KEY_LENGTH];
+        assert_eq!(
+            get_key_pair_from_bytes_ed25519(&private_key),
+            new_key_pair_ed25519(Some(&private_key))
+        );
+    }
+
+    #[test]
+    fn from_bytes_produces_verifiable_signatures() {
+        let private_key = [11u8; ED25519_SIGNING_KEY_LENGTH];
+        let (signing_key, verifying_key) = get_key_pair_from_bytes_ed25519(&private_key);
+        let digest = [3u8; ED25519_DIGEST_LENGTH];
+        let sig = SigningKey::from_bytes(&signing_key).sign(&digest);
+        assert!(verify_signature_over_prehash_ed25519(
+            &sig.to_bytes(),
+            &verifying_key,
+            &digest,
+        ));
     }
 
     /// A unique temp-file path for a PEM fixture, scoped to this process and a
